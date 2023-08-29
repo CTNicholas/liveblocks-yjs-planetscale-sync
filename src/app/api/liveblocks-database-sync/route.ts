@@ -1,5 +1,5 @@
 import { WebhookHandler } from "@liveblocks/node";
-import { sql } from "@vercel/postgres";
+import mysql from "mysql2/promise";
 
 /**
  * An example of a webhook endpoint that listens for Yjs changes
@@ -11,11 +11,14 @@ import { sql } from "@vercel/postgres";
  */
 
 // "Signing secret" found in a project's webhooks page
-const WEBHOOK_SECRET = "whsec_LQdX6oaQx/9sPhO9p99dR1uTSAcaZ/Sp";
+const WEBHOOK_SECRET = process.env.LIVEBLOCKS_WEBHOOK_SECRET as string;
 const webhookHandler = new WebhookHandler(WEBHOOK_SECRET);
 
 // "Secret key" found in a project's API keys page
 const API_SECRET = process.env.LIVEBLOCKS_SECRET_KEY as string;
+
+// Your PlanetScale database URL
+const DATABASE_URL = process.env.DATABASE_URL as string;
 
 export async function POST(request: Request) {
   const body = await request.json();
@@ -50,29 +53,28 @@ export async function POST(request: Request) {
     }
 
     // The Yjs document data
-    const yjsDocData = await response.text();
+    const yDocData = await response.text();
 
     // Update your database with the Yjs data
+    const connection = await mysql.createConnection(DATABASE_URL);
+
+    const sql = `
+      INSERT INTO documents (roomId, yDocData)
+      VALUES (?, ?)
+      ON DUPLICATE KEY UPDATE 
+          yDocData = VALUES(yDocData);
+    `;
+
     try {
-      await sql`
-        CREATE TABLE IF NOT EXISTS documents (
-          roomId VARCHAR(255) PRIMARY KEY,
-          yjsDoc TEXT NOT NULL
-        );
-      `;
-      await sql`
-        INSERT INTO documents (roomId, yjsDoc)
-        VALUES (${roomId}, ${yjsDocData})
-        ON CONFLICT (roomId)
-        DO UPDATE SET
-          yjsDoc = EXCLUDED.yjsDoc
-      `;
+      await connection.query(sql, [roomId, yDocData]);
     } catch (err) {
       console.log(err);
       return new Response("Problem inserting data into database", {
         status: 500,
       });
     }
+
+    await connection.end();
   }
 
   return new Response(null, { status: 200 });
